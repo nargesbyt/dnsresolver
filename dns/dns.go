@@ -21,13 +21,7 @@ func getRootServers() []string {
 	return rootServers
 }
 
-func HandlePacket(pc net.PacketConn, addr net.Addr, buf []byte) {
-	if err := handlePacket(pc, addr, buf); err != nil {
-		fmt.Printf("handlepacket error:%s", err)
-	}
-}
-
-func handlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
+func HandlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
 	var p dnsmessage.Parser
 	header, err := p.Start(buf)
 	if err != nil {
@@ -103,7 +97,6 @@ func resolver(servers []string, question dns.Question) (*dns.Msg, error) {
 		}
 
 	}
-
 	return resp, nil
 
 }
@@ -117,7 +110,6 @@ func dnsQuery(servers []string, question string, qType uint16) (*dns.Msg, error)
 
 	for _, server := range servers {
 		responseMessage, _, err := c.Exchange(message, server+":53")
-		//fmt.Println(responseMessage)
 		if err == nil {
 			return responseMessage, nil
 		}
