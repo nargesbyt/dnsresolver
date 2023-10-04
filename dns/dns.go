@@ -1,10 +1,10 @@
 package dns
 
 import (
-	//"dnsResolver/dns/cache"
-	"dnsResolver/dns/cache"
+	//"github.com/nargesbyt/dnsresolver/dns/cache"
 	"errors"
 	"fmt"
+	"github.com/nargesbyt/dnsresolver/dns/cache"
 	"net"
 	"strings"
 
@@ -26,20 +26,19 @@ type Packet struct {
 
 func (pac *Packet) parsePacket() (dnsmessage.Header, *dnsmessage.Question, error) {
 	var p dnsmessage.Parser
+
 	//Start parses the header
 	header, err := p.Start(pac.Body)
-
 	if err != nil {
-		log.Fatal().Err(err).Msg("unable to parse packet")
-		return header, nil, err
+		return header, nil, fmt.Errorf("unable to parse packet: %w", err)
 	}
+
 	//Question parses a single question
 	question, err := p.Question()
-
 	if err != nil {
-		log.Fatal().Err(err).Msg("unable to parse question part of packet")
-		return header, &question, err
+		return header, &question, fmt.Errorf("unable to parse question part of packet: %w", err)
 	}
+
 	return header, &question, nil
 }
 
@@ -65,58 +64,57 @@ func (r *Resolver) SetQuestion(question *dnsmessage.Question) dns.Question {
 	return q
 }
 
-func (r *Resolver) CheckCache(key string) ([]string, error) {
+func (r *Resolver) GetNameServers(key string) ([]string, error) {
+	if !r.Cache.Exists(key) {
+		return RootServers, nil
+	}
 
 	value, err := r.Cache.Get(key)
-	if !errors.Is(err, cache.ErrKeyNotExists) {
-		log.Err(err).Msg("unale to connect to cache")
-		return nil, err
+	if err != nil {
+		return nil, fmt.Errorf("unable to locate a cache record: %w", err)
 	}
-	if err == nil {
-		if stringValue, ok := value.([]string); ok {
-			return stringValue, nil
-		}
-		return nil, nil
-	}
-	return nil, nil
 
+	return value.([]string), nil
 }
 
 func (r *Resolver) HandlePacket(packet Packet) error {
+	header, question, err := packet.parsePacket()
+	if err != nil {
+		return err
+	}
 
-	header, question, _ := packet.parsePacket()
 	//q holds a dns question
 	q := r.SetQuestion(question)
 	splited := strings.Split(q.Name, ".")
 	key := splited[1]
-	servers, err := r.CheckCache(key)
-	var nameServers []string
-	if err == nil && servers != nil {
-		fmt.Printf("values associated to key are: %s", servers)
-		nameServers = servers
-	} else {
-		log.Err(err).Msg("unable to read data from cache")
-		nameServers = RootServers
-	}
-	response, err := r.resolver(nameServers, q)
+
+	servers, err := r.GetNameServers(key)
 	if err != nil {
-		log.Fatal().Err(err).Msg("unable to resolve domain")
 		return err
 	}
+
+	response, err := r.resolver(servers, q)
+	if err != nil {
+		return fmt.Errorf("unable to resolve domain: %w", err)
+	}
+
 	response.MsgHdr.Id = header.ID
-	packet.sendResponse(response)
+	err = packet.sendResponse(response)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (r *Resolver) resolver(servers []string, question dns.Question) (*dns.Msg, error) {
-
 	resp, err := r.dnsQuery(servers, question.Name, question.Qtype)
 	switch {
 	case err != nil:
 		{
-			log.Err(err).Msg("unable to resolve domain")
-			return resp, err
+			return resp, fmt.Errorf("unable to resolve domain: %w", err)
 		}
+
 	//if the Answer section is not empty it contains the IP addresses of requested domain
 	case len(resp.Answer) > 0:
 		//r.Cache.Set(question.Name, resp.Answer)
@@ -132,33 +130,32 @@ func (r *Resolver) resolver(servers []string, question dns.Question) (*dns.Msg, 
 	//if (len(Answer)==0 and len(Ns)>0) then there are some nameservers that we ask them where domain is
 	default:
 		{
-			servers := r.lookupNameservers(resp)
+			servers, err = r.lookupNameservers(resp)
+			if err != nil {
+				return nil, err
+			}
+
 			splited := strings.Split(question.Name, ".")
-			key := splited[len(splited)-1]
+			key := splited[len(splited)-2]
 			r.Cache.Set(key, servers)
 			log.Info().Msg("data stored in cache")
 
 			if len(servers) > 0 {
 				resp, err := r.resolver(servers, question)
 				if err != nil {
-					log.Err(err).Msg("unable resolve domain")
-					return resp, err
+					return resp, fmt.Errorf("unable resolve domain: %w", err)
 				}
+
 				return resp, nil
 			} else {
 				resp.Rcode = dns.RcodeNameError
 				return resp, nil
 			}
 		}
-
 	}
-	return resp, nil
-
 }
 
 func (r *Resolver) dnsQuery(servers []string, question string, qType uint16) (*dns.Msg, error) {
-	log.Print("dnsQuery() ", servers)
-	fmt.Printf("question: %s\n ", question)
 	message := new(dns.Msg)
 	message.SetQuestion(dns.Fqdn(question), qType)
 
@@ -166,40 +163,33 @@ func (r *Resolver) dnsQuery(servers []string, question string, qType uint16) (*d
 
 	for _, server := range servers {
 		responseMessage, _, err := c.Exchange(message, server+":53")
-		fmt.Print("response: ", responseMessage)
-		if err == nil {
-			log.Print("response :", responseMessage)
-			return responseMessage, nil
-
+		if err != nil {
+			return nil, err
 		}
-		log.Print("exchange error : ", err.Error())
+
+		return responseMessage, nil
 	}
 
 	return nil, errors.New("no response from servers")
 }
 
 // lookupNameservers find the IP Address of nameservers
-func (r *Resolver) lookupNameservers(message *dns.Msg) (servers []string) {
-	nameservers := []string{}
-	headerNameParts := strings.Split(message.Ns[0].Header().Name, ".")
+func (r *Resolver) lookupNameservers(message *dns.Msg) ([]string, error) {
+	nameservers := make([]string, 0)
 
-	fmt.Printf("message : %#v \n", *message)
-	fmt.Printf("ns : %#v \n", len(headerNameParts))
-	fmt.Printf("qtype : %#v \n", message.Question[0].Qtype)
-	fmt.Printf("qclass : %#v \n", message.Question[0].Qclass)
 	// if Extra section is not empty it contains the IP Address of nameservers
 	ns, extra := message.Ns, message.Extra
 
 	for _, rr := range ns {
 		/*if there is no record associated with requested type then in Ns section there is SOA record*/
 		if rr.Header().Rrtype == dns.TypeSOA {
-			return nil
+			return nil, nil
 		}
 		nameservers = append(nameservers, rr.(*dns.NS).Ns)
 	}
 
 	newServerFound := false
-	servers = []string{}
+	var servers []string
 
 	for _, rr := range extra {
 		if rr.Header().Rrtype == dns.TypeA {
@@ -213,15 +203,14 @@ func (r *Resolver) lookupNameservers(message *dns.Msg) (servers []string) {
 		}
 	}
 	if newServerFound {
-		return servers
-
+		return servers, nil
 	} else {
 		for _, nameserver := range nameservers {
 			if !newServerFound {
 				//TODO checkCache
 				resp, err := r.resolver(RootServers, dns.Question{Name: nameserver, Qtype: dns.TypeA, Qclass: dns.ClassINET})
 				if err != nil {
-					fmt.Printf("warning: lookup of nameserver %s failed%s \n", nameserver, err)
+					return nil, err
 				} else {
 					newServerFound = true
 					for _, answer := range resp.Answer {
@@ -233,5 +222,6 @@ func (r *Resolver) lookupNameservers(message *dns.Msg) (servers []string) {
 			}
 		}
 	}
-	return servers
+
+	return servers, nil
 }

@@ -1,27 +1,15 @@
 package main
 
 import (
-	"dnsResolver/dns"
-	"dnsResolver/dns/cache"
-	"errors"
 	"fmt"
-	"net"
-	"os"
-
-	//"git.mills.io/prologic/bitcask"
+	"github.com/nargesbyt/dnsresolver/dns"
+	"github.com/nargesbyt/dnsresolver/dns/cache"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/rs/zerolog/pkgerrors"
+	"net"
+	"os"
 )
-
-func checkCacheFolder() {
-	if _, err := os.Stat(".cache"); errors.Is(err, os.ErrNotExist) {
-		err := os.Mkdir(".cache", os.ModePerm)
-		if err != nil {
-			log.Err(err).Msg("unable to make directory")
-		}
-	}
-}
 
 func main() {
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
@@ -42,7 +30,7 @@ func main() {
 	defer packetConnection.Close()
 
 	r := dns.Resolver{
-		Cache: &cache.InMemoryCache{make(map[string]interface{})},
+		Cache: &cache.InMemory{Data: make(map[string]interface{})},
 	}
 
 	for {
@@ -55,12 +43,14 @@ func main() {
 			continue
 		}
 		packet := dns.Packet{
-			Conn: packetConnection,
+			Conn:    packetConnection,
 			Address: addr,
-			Body: buf[:bytesRead],
+			Body:    buf[:bytesRead],
 		}
-		r.HandlePacket(packet)
 
+		err = r.HandlePacket(packet)
+		if err != nil {
+			log.Err(err).Msg("could not handle the packet")
+		}
 	}
-
 }
