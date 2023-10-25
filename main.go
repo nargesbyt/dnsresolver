@@ -30,7 +30,7 @@ func main() {
 	defer packetConnection.Close()
 
 	r := dns.Resolver{
-		Cache: &cache.InMemory{Data: make(map[string]interface{})},
+		Cache: &cache.InMemory{Data: make(map[string]*cache.Item)},
 	}
 
 	for {

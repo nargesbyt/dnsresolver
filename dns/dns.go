@@ -4,10 +4,9 @@ import (
 	//"github.com/nargesbyt/dnsresolver/dns/cache"
 	"errors"
 	"fmt"
-	"github.com/nargesbyt/dnsresolver/dns/cache"
 	"net"
 	"strings"
-
+	"github.com/nargesbyt/dnsresolver/dns/cache"
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/dns/dnsmessage"
@@ -63,7 +62,8 @@ func (r *Resolver) SetQuestion(question *dnsmessage.Question) dns.Question {
 	q.Qclass = uint16(question.Class)
 	return q
 }
-
+//this function get tld and return associated nameservers
+//at first search it in cache if it doesn't exist it returns rootservers 
 func (r *Resolver) GetNameServers(key string) ([]string, error) {
 	if !r.Cache.Exists(key) {
 		return RootServers, nil
@@ -73,7 +73,6 @@ func (r *Resolver) GetNameServers(key string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to locate a cache record: %w", err)
 	}
-
 	return value.([]string), nil
 }
 
@@ -117,7 +116,6 @@ func (r *Resolver) resolver(servers []string, question dns.Question) (*dns.Msg, 
 
 	//if the Answer section is not empty it contains the IP addresses of requested domain
 	case len(resp.Answer) > 0:
-		//r.Cache.Set(question.Name, resp.Answer)
 		return resp, nil
 
 	//if the Ns section is empty it means there is no nameserver to know the address of requested domain
@@ -135,10 +133,10 @@ func (r *Resolver) resolver(servers []string, question dns.Question) (*dns.Msg, 
 				return nil, err
 			}
 
-			splited := strings.Split(question.Name, ".")
-			key := splited[len(splited)-2]
-			r.Cache.Set(key, servers)
-			log.Info().Msg("data stored in cache")
+			//splited := strings.Split(question.Name, ".")
+			//key := splited[len(splited)-2]
+			//r.Cache.Set(key, servers)
+			//log.Info().Msg("data stored in cache")
 
 			if len(servers) > 0 {
 				resp, err := r.resolver(servers, question)
